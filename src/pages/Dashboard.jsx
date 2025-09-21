@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import ResultsTable from "@/components/ResultsTable.jsx";
 import Overview from "@/components/Overview.jsx";
 import { useToast } from "@/hooks/use-toast.js";
-import { FileText, Upload, CheckCircle, AlertCircle, Clock, Play, X, FileSpreadsheet, Camera, Image as ImageIcon } from "lucide-react";
+import { FileText, Upload, CheckCircle, AlertCircle, Clock, Play, X, FileSpreadsheet, Camera, Image as ImageIcon, LogOut } from "lucide-react";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -33,47 +33,114 @@ const Dashboard = () => {
   const [showResults, setShowResults] = useState(false);
   const [results, setResults] = useState([]);
 
-  useEffect(() => {
-    const mockBatches = [
-      {
-        id: "batch-001",
-        examName: "Mathematics Final Exam 2024",
-        uploadDate: "2024-03-15",
-        status: "Completed",
-        totalSheets: 120,
-        completedSheets: 120,
-      },
-      {
-        id: "batch-002",
-        examName: "Physics Midterm Test",
-        uploadDate: "2024-03-14",
-        status: "Processing",
-        totalSheets: 85,
-        completedSheets: 45,
-      },
-      {
-        id: "batch-003",
-        examName: "Chemistry Quiz Set A",
-        uploadDate: "2024-03-13",
-        status: "Flagged",
-        totalSheets: 60,
-        completedSheets: 58,
-      },
-    ];
+  // Real data fetching functions
+  const fetchDashboardStats = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return;
+      }
 
-    setTimeout(() => {
-      setBatches(mockBatches);
-      setMetrics({
-        totalBatches: mockBatches.length,
-        processingBatches: mockBatches.filter((b) => b.status === "Processing").length,
-        completedBatches: mockBatches.filter((b) => b.status === "Completed").length,
-        flaggedSheets: mockBatches.reduce(
-          (sum, b) => sum + (b.status === "Flagged" ? b.totalSheets - b.completedSheets : 0),
-          0
-        ),
+      const response = await fetch('http://localhost:5000/api/dashboard/stats', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
-    }, 800);
-  }, []);
+
+      if (response.ok) {
+        const data = await response.json();
+        setMetrics(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch dashboard stats:', error);
+    }
+  };
+
+  const fetchRecentBatches = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await fetch('http://localhost:5000/api/dashboard/recent-batches', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBatches(data.batches || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch recent batches:', error);
+    }
+  };
+
+  const fetchLatestResults = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      // Get the latest batch with completed results
+      const batchesResponse = await fetch('http://localhost:5000/api/batches', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (batchesResponse.ok) {
+        const batchesData = await batchesResponse.json();
+        const completedBatches = batchesData.batches?.filter(b => b.status === 'Completed') || [];
+        
+        if (completedBatches.length > 0) {
+          const latestBatch = completedBatches[0]; // Most recent completed batch
+          
+          // Fetch results for the latest batch
+          const resultsResponse = await fetch(`http://localhost:5000/api/batches/${latestBatch.id}/results`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          if (resultsResponse.ok) {
+            const resultsData = await resultsResponse.json();
+            
+            // Transform database results to match ResultsTable format
+            const transformedResults = resultsData.results?.map(result => ({
+              name: result.studentName || `Student ${result.studentId}`,
+              section: result.detectedSet || 'A',
+              math: result.mathScore || 0,
+              physics: result.physicsScore || 0,
+              chemistry: result.chemistryScore || 0,
+              history: result.historyScore || 0
+            })) || [];
+
+            setResults(transformedResults);
+            setShowResults(transformedResults.length > 0);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch latest results:', error);
+      setResults([]);
+      setShowResults(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardStats();
+    fetchRecentBatches();
+    fetchLatestResults();
+    
+    // Set up periodic refresh for real-time updates
+    const interval = setInterval(() => {
+      fetchDashboardStats();
+      fetchRecentBatches();
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [navigate]);
 
   // Upload handlers
   const onDragOver = useCallback((e) => {
@@ -199,19 +266,90 @@ const Dashboard = () => {
 
   const removeAnswerFile = () => setAnswerFile(null);
 
+  const handleLogout = () => {
+    // Clear authentication data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_data');
+    
+    // Show logout success message
+    toast({
+      title: "Logged Out",
+      description: "You have been successfully logged out",
+      variant: "default",
+    });
+    
+    // Redirect to login page
+    navigate('/login');
+  };
+
   const handleUpload = async () => {
-    if (!questionSet || files.length === 0) {
-      toast({ title: "Missing Information", description: "Please select question set and upload files", variant: "destructive" });
+    if (files.length === 0) {
+      toast({ title: "No Files Selected", description: "Please add images to upload.", variant: "destructive" });
+      return;
+    }
+
+    if (!questionSet) {
+      toast({ title: "Question Set Required", description: "Please select a question set before uploading.", variant: "destructive" });
       return;
     }
 
     setIsUploading(true);
-    setTimeout(() => {
-      toast({ title: "Upload Successful", description: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded for processing` });
-      setFiles([]);
-      setQuestionSet("");
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return;
+      }
+
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('images', file);
+      });
+      formData.append('questionSet', questionSet);
+      formData.append('examName', `Quick Upload ${new Date().toLocaleDateString()}`);
+
+      const response = await fetch('http://localhost:5000/api/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        toast({ 
+          title: "Upload Successful", 
+          description: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded successfully. Processing started.` 
+        });
+        
+        // Navigate to real-time results page
+        navigate(`/results/${data.batch_id}`);
+        
+        // Reset form
+        setFiles([]);
+        setQuestionSet("");
+        setIsUploading(false);
+        
+        // Refresh dashboard data
+        fetchDashboardStats();
+        fetchRecentBatches();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Upload failed');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      toast({ 
+        title: "Upload Failed", 
+        description: error.message || "Failed to upload images. Please try again.",
+        variant: "destructive" 
+      });
       setIsUploading(false);
-    }, 3000);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -228,32 +366,59 @@ const Dashboard = () => {
   };
 
   const handleAnswerUpload = async () => {
-    if (!questionSet) {
-      toast({ title: "Select Question Set", description: "Please choose a question set before uploading the answer key.", variant: "destructive" });
-      return;
-    }
     if (!answerFile) {
       toast({ title: "No File Selected", description: "Please choose an Excel/CSV file to upload.", variant: "destructive" });
       return;
     }
 
     setIsUploadingAnswer(true);
-    setTimeout(() => {
-      toast({ title: "Answer Key Uploaded", description: `${answerFile.name} uploaded for the selected question set.` });
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('answerKey', answerFile);
+
+      const response = await fetch('http://localhost:5000/api/upload-answer-key', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        toast({ 
+          title: "Answer Key Uploaded", 
+          description: `${answerFile.name} uploaded successfully.` 
+        });
+        setIsUploadingAnswer(false);
+        setAnswerFile(null);
+        
+        // Refresh the latest results
+        await fetchLatestResults();
+        
+        // Refresh dashboard stats
+        fetchDashboardStats();
+        fetchRecentBatches();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Answer key upload failed');
+      }
+    } catch (error) {
+      console.error('Answer key upload error:', error);
+      toast({ 
+        title: "Upload Failed", 
+        description: error.message || "Failed to upload answer key. Please try again.",
+        variant: "destructive" 
+      });
       setIsUploadingAnswer(false);
-      setAnswerFile(null);
-      setShowResults(true);
-      setResults([
-        { name: "Alice Smith", section: "A", math: 85, physics: 78, chemistry: 92, history: 87 },
-        { name: "Bob Johnson", section: "A", math: 72, physics: 65, chemistry: 88, history: 90 },
-        { name: "Eva Jensen", section: "B", math: 79, physics: 82, chemistry: 76, history: 89 },
-        { name: "Charlie Brown", section: "A", math: 78, physics: 80, chemistry: 75, history: 82 },
-        { name: "Diana Miller", section: "B", math: 90, physics: 88, chemistry: 94, history: 89 },
-        { name: "Melvin Bale", section: "A", math: 60, physics: 95, chemistry: 99, history: 82 },
-        { name: "Henna Malik", section: "B", math: 83, physics: 70, chemistry: 70, history: 92 },
-        { name: "Diane Small", section: "A", math: 88, physics: 95, chemistry: 61, history: 91 },
-      ]);
-    }, 2000);
+    }
   };
 
   const getStatusIcon = (status) => {
@@ -270,7 +435,10 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-muted p-3 md:p-6 no-select">
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-red-500 via-red-300 to-sky-400 p-3 md:p-6 no-select">
+      <div className="pointer-events-none absolute -top-24 -left-24 h-[38rem] w-[38rem] rounded-full bg-red-500/45 blur-3xl -z-10" />
+      <div className="pointer-events-none absolute -bottom-32 -right-20 h-[36rem] w-[36rem] rounded-full bg-sky-400/45 blur-3xl -z-10" />
+      <div className="pointer-events-none absolute top-1/3 -right-24 h-[30rem] w-[30rem] rounded-full bg-blue-400/40 blur-3xl -z-10" />
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in no-select">
           <div>
@@ -278,13 +446,9 @@ const Dashboard = () => {
             <p className="text-muted-foreground no-select">OMR Evaluation Platform</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button onClick={() => navigate("/workflow-demo")} variant="outline" size="sm" className="text-xs md:text-sm button-hover-pulse button-icon-rotate">
-              <Play className="w-4 h-4 mr-1 md:mr-2" />
-              View Workflow
-            </Button>
-            <Button onClick={() => navigate("/upload")} variant="gradient" size="sm" className="text-xs md:text-sm button-hover-glow button-shimmer">
-              <Upload className="w-4 h-4 mr-1 md:mr-2" />
-              Full Upload Page
+            <Button onClick={handleLogout} variant="destructive" size="sm" className="text-xs md:text-sm button-hover-glow">
+              <LogOut className="w-4 h-4 mr-1 md:mr-2" />
+              Logout
             </Button>
           </div>
         </div>
@@ -361,7 +525,7 @@ const Dashboard = () => {
                 </div>
               )}
 
-              <Button onClick={handleUpload} variant="gradient" className="w-full transition-all duration-300 button-hover-glow button-ripple" disabled={isUploading || files.length === 0 || !questionSet} size="sm">
+              <Button onClick={handleUpload} variant="gradient" className="w-full transition-all duration-300 button-hover-glow button-ripple" disabled={isUploading || files.length === 0} size="sm">
                 {isUploading ? "Processing Upload..." : `Upload ${files.length} Image${files.length !== 1 ? "s" : ""}`}
               </Button>
             </CardContent>
@@ -408,7 +572,7 @@ const Dashboard = () => {
                 </div>
               )}
 
-              <Button onClick={handleAnswerUpload} variant="gradient" className="w-full transition-all duration-300 button-hover-glow button-ripple" disabled={isUploadingAnswer || !answerFile || !questionSet} size="sm">
+              <Button onClick={handleAnswerUpload} variant="gradient" className="w-full transition-all duration-300 button-hover-glow button-ripple" disabled={isUploadingAnswer || !answerFile} size="sm">
                 {isUploadingAnswer ? "Uploading Answer Key..." : "Upload Answer Key"}
               </Button>
             </CardContent>
@@ -425,7 +589,10 @@ const Dashboard = () => {
 
         <div className="space-y-4 md:space-y-6 mt-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 animate-slide-up">
-            <Card className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select">
+            <Card 
+              className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select cursor-pointer transform hover:scale-105 hover:-translate-y-1" 
+              onClick={() => navigate("/total-batches")}
+            >
               <CardContent className="p-3 md:p-4 no-select">
                 <div className="flex items-center space-x-2 md:space-x-3 no-select">
                   <div className="p-2 bg-primary/10 rounded-lg">
@@ -439,7 +606,10 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select">
+            <Card 
+              className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select cursor-pointer transform hover:scale-105 hover:-translate-y-1" 
+              onClick={() => navigate("/processing-batches")}
+            >
               <CardContent className="p-3 md:p-4 no-select">
                 <div className="flex items-center space-x-2 md:space-x-3 no-select">
                   <div className="p-2 bg-processing/10 rounded-lg">
@@ -453,7 +623,10 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select">
+            <Card 
+              className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select cursor-pointer transform hover:scale-105 hover:-translate-y-1" 
+              onClick={() => navigate("/completed-batches")}
+            >
               <CardContent className="p-3 md:p-4 no-select">
                 <div className="flex items-center space-x-2 md:space-x-3 no-select">
                   <div className="p-2 bg-success/10 rounded-lg">
@@ -467,7 +640,10 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select">
+            <Card 
+              className="bg-gradient-card shadow-md hover:shadow-lg transition-all duration-300 no-select cursor-pointer transform hover:scale-105 hover:-translate-y-1" 
+              onClick={() => navigate("/flagged-sheets")}
+            >
               <CardContent className="p-3 md:p-4 no-select">
                 <div className="flex items-center space-x-2 md:space-x-3 no-select">
                   <div className="p-2 bg-warning/10 rounded-lg">
@@ -482,40 +658,31 @@ const Dashboard = () => {
             </Card>
           </div>
 
-          <Card className="animate-scale-in shadow-lg no-select">
-            <CardHeader className="pb-3 md:pb-4">
-              <CardTitle className="text-base md:text-lg no-select">Recent Batches</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {batches.map((batch, index) => (
-                  <div key={batch.id} className="flex items-center justify-between p-3 md:p-4 border rounded-lg hover:bg-muted/50 transition-colors duration-200 cursor-pointer animate-fade-in no-select" style={{ animationDelay: `${index * 0.1}s` }} onClick={() => navigate(`/results/${batch.id}`)}>
-                    <div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0 no-select">
-                      <div className="p-1.5 md:p-2 bg-primary/10 rounded">
-                        <FileText className="w-3 md:w-4 h-3 md:h-4 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1 no-select">
-                        <h3 className="font-medium text-sm md:text-base text-foreground truncate no-select">{batch.examName}</h3>
-                        <p className="text-xs text-muted-foreground no-select">{new Date(batch.uploadDate).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-2 md:space-x-4 flex-shrink-0">
-                      <div className="text-right hidden sm:block">
-                        <p className="text-xs font-medium">{batch.completedSheets}/{batch.totalSheets}</p>
-                        <div className="w-16 md:w-20 h-1.5 md:h-2 bg-muted rounded-full mt-1">
-                          <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${(batch.completedSheets / batch.totalSheets) * 100}%` }} />
-                        </div>
-                      </div>
-                      <Badge className={`${getStatusColor(batch.status)} text-xs`}>
-                        {getStatusIcon(batch.status)}
-                        <span className="ml-1 hidden sm:inline">{batch.status}</span>
-                      </Badge>
-                    </div>
+          {/* Beautiful Footer */}
+          <div className="mt-8 animate-fade-in">
+            <Card className="bg-gradient-to-r from-red-500/10 via-sky-400/10 to-blue-400/10 border-none shadow-lg">
+              <CardContent className="p-6 text-center">
+                <div className="flex flex-col items-center justify-center space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-2xl">❤️</span>
+                    <p className="text-lg font-medium bg-gradient-to-r from-red-600 via-purple-600 to-blue-600 bg-clip-text text-transparent">
+                      Made with Love
+                    </p>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                  <p className="text-sm text-muted-foreground font-medium">
+                    © 2025 OMR Evaluation Platform
+                  </p>
+                  <div className="flex items-center space-x-4 mt-3 text-xs text-muted-foreground">
+                    <span className="hover:text-primary transition-colors cursor-pointer">Privacy Policy</span>
+                    <span className="text-muted-foreground/50">•</span>
+                    <span className="hover:text-primary transition-colors cursor-pointer">Terms of Service</span>
+                    <span className="text-muted-foreground/50">•</span>
+                    <span className="hover:text-primary transition-colors cursor-pointer">Support</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

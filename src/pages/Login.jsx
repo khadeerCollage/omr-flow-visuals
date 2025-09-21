@@ -1,36 +1,91 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { Button } from "@/components/ui/button.jsx";
-import { Input } from "@/components/ui/input.jsx";
-import { Label } from "@/components/ui/label.jsx";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.jsx";
-import { useToast } from "@/hooks/use-toast.js";
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 const Login = () => {
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
-  const { toast } = useToast();
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    
+    if (!credentials.username.trim() || !credentials.password.trim()) {
+      setError("Both username and password are required");
+      return;
+    }
+
+    console.log('Starting login process...');
+    console.log('Credentials:', { username: credentials.username });
+
     setIsLoading(true);
-    setTimeout(() => {
-      if (credentials.username && credentials.password) {
-        toast({ title: "Login Successful", description: "Welcome to OMR Evaluation Platform" });
-        navigate("/dashboard");
+    setError("");
+
+    try {
+      console.log('Sending login request...');
+
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: credentials.username.trim(),
+          password: credentials.password.trim()
+        })
+      });
+
+      console.log('Login response status:', response.status);
+
+      const data = await response.json();
+      console.log('Login response data:', data);
+
+      if (response.ok && data.success) {
+        console.log('Login successful!');
+        
+        // Store token in localStorage
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+          console.log('Token stored successfully');
+        }
+
+        // Store user info
+        if (data.user) {
+          localStorage.setItem('user', JSON.stringify(data.user));
+          console.log('User info stored successfully');
+        }
+
+        // Clear form
+        setCredentials({ username: "", password: "" });
+        
+        // Navigate to dashboard
+        navigate('/dashboard');
       } else {
-        toast({ title: "Login Failed", description: "Please enter valid credentials", variant: "destructive" });
+        console.error('Login failed:', data.message);
+        setError(data.message || 'Invalid credentials');
       }
+    } catch (error) {
+      console.error('Login error:', error);
+      
+      if (error.message.includes('Failed to fetch')) {
+        setError("Cannot connect to server. Please ensure the backend is running.");
+      } else {
+        setError("Login failed. Please try again.");
+      }
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden flex items-center justify-center bg-gradient-to-br from-sky-200 via-indigo-200 to-rose-300 p-6">
-      <div className="pointer-events-none absolute -top-24 -left-24 h-[38rem] w-[38rem] rounded-full bg-sky-400/45 blur-3xl -z-10" />
-      <div className="pointer-events-none absolute -bottom-32 -right-20 h-[36rem] w-[36rem] rounded-full bg-pink-400/45 blur-3xl -z-10" />
-      <div className="pointer-events-none absolute top-1/3 -right-24 h-[30rem] w-[30rem] rounded-full bg-indigo-400/40 blur-3xl -z-10" />
+    <div className="relative min-h-screen overflow-hidden flex items-center justify-center bg-gradient-to-br from-red-500 via-red-300 to-sky-400 p-6">
+      <div className="pointer-events-none absolute -top-24 -left-24 h-[38rem] w-[38rem] rounded-full bg-red-500/45 blur-3xl -z-10" />
+      <div className="pointer-events-none absolute -bottom-32 -right-20 h-[36rem] w-[36rem] rounded-full bg-sky-400/45 blur-3xl -z-10" />
+      <div className="pointer-events-none absolute top-1/3 -right-24 h-[30rem] w-[30rem] rounded-full bg-blue-400/40 blur-3xl -z-10" />
 
       <div className="w-full max-w-sm p-[1px] rounded-2xl bg-gradient-to-br from-white/80 via-indigo-400/50 to-white/40 shadow-2xl animate-fade-in">
         <Card className="rounded-2xl bg-gradient-to-b from-white/90 to-white/70 backdrop-blur-xl border border-white/60 shadow-[0_10px_40px_rgba(99,102,241,0.15)]">
@@ -72,6 +127,7 @@ const Login = () => {
                   />
                 </div>
               </div>
+              {error && <p className="text-red-500 text-sm">{error}</p>}
               <Button
                 type="submit"
                 className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-medium py-3 rounded-md transition-all duration-300 mt-6 hover:shadow-lg hover:shadow-indigo-400/30 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-[.99]"
